@@ -22,9 +22,12 @@ type EndpointGroupBinding struct {
 }
 
 type EndpointGroupBindingSpec struct {
-	// +kubebuilder:validation:Required
+	// +optional
 	// +kubebuilder:validation:Type:=string
-	EndpointGroupArn string `json:"endpointGroupArn"`
+	EndpointGroupArn string `json:"endpointGroupArn,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Type:=string
+	AcceleratorArn string `json:"acceleratorArn,omitempty"`
 	// +optional
 	// +kubebuilder:validation:Type:=boolean
 	// +kubebuilder:default=false
@@ -52,6 +55,11 @@ type EndpointGroupBindingStatus struct {
 	// +optional
 	// +kubebuilder:validation:Type:=array
 	EndpointIds []string `json:"endpointIds"`
+	// +optional
+	// +kubebuilder:validation:Type:=string
+	// ResolvedEndpointGroupArn is the actual endpoint group ARN being used,
+	// either from spec.endpointGroupArn or created from spec.acceleratorArn
+	ResolvedEndpointGroupArn string `json:"resolvedEndpointGroupArn,omitempty"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Type:=integer
 	// +kubebuilder:default=0

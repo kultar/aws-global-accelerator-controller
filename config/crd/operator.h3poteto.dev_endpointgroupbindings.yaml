@@ -48,6 +48,8 @@ spec:
             type: object
           spec:
             properties:
+              acceleratorArn:
+                type: string
               clientIPPreservation:
                 default: false
                 type: boolean
@@ -71,8 +73,6 @@ spec:
                 format: int32
                 nullable: true
                 type: integer
-            required:
-            - endpointGroupArn
             type: object
           status:
             properties:
@@ -84,6 +84,11 @@ spec:
                 default: 0
                 format: int64
                 type: integer
+              resolvedEndpointGroupArn:
+                description: ResolvedEndpointGroupArn is the actual endpoint group
+                  ARN being used, either from spec.endpointGroupArn or created from
+                  spec.acceleratorArn
+                type: string
             required:
             - observedGeneration
             type: object

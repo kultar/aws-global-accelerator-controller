@@ -19,8 +19,24 @@ func Validate(admission *admissionv1.AdmissionReview) *admissionv1.AdmissionRevi
 		return reviewResponse(admission.Request.UID, false, 400, err.Error())
 	}
 
+	if admission.Request.Operation == admissionv1.Create {
+		new := endpointgroupbindingv1alpha1.EndpointGroupBinding{}
+		if err := json.Unmarshal(admission.Request.Object.Raw, &new); err != nil {
+			klog.Error(err)
+			return reviewResponse(admission.Request.UID, false, http.StatusInternalServerError, err.Error())
+		}
+
+		allowed, err := validateCreate(&new)
+		if err != nil {
+			klog.Error(err)
+			return reviewResponse(admission.Request.UID, false, http.StatusForbidden, err.Error())
+		}
+
+		return reviewResponse(admission.Request.UID, allowed, http.StatusOK, "valid")
+	}
+
 	if admission.Request.Operation != admissionv1.Update {
-		klog.V(4).Info("Operation is not Update")
+		klog.V(4).Info("Operation is not Update or Create")
 		return reviewResponse(admission.Request.UID, true, http.StatusOK, "")
 	}
 
@@ -41,7 +57,7 @@ func Validate(admission *admissionv1.AdmissionReview) *admissionv1.AdmissionRevi
 		return reviewResponse(admission.Request.UID, false, http.StatusInternalServerError, err.Error())
 	}
 
-	allowed, err := validate(&previous, &new)
+	allowed, err := validateUpdate(&previous, &new)
 	if err != nil {
 		klog.Error(err)
 		return reviewResponse(admission.Request.UID, false, http.StatusForbidden, err.Error())
@@ -50,10 +66,39 @@ func Validate(admission *admissionv1.AdmissionReview) *admissionv1.AdmissionRevi
 	return reviewResponse(admission.Request.UID, allowed, http.StatusOK, "valid")
 }
 
-func validate(previous, new *endpointgroupbindingv1alpha1.EndpointGroupBinding) (bool, error) {
+func validateCreate(new *endpointgroupbindingv1alpha1.EndpointGroupBinding) (bool, error) {
+	// Validate that at least one ARN is specified
+	if new.Spec.EndpointGroupArn == "" && new.Spec.AcceleratorArn == "" {
+		return false, fmt.Errorf("either Spec.EndpointGroupArn or Spec.AcceleratorArn must be specified")
+	}
+
+	// Validate that both ARNs are not specified
+	if new.Spec.EndpointGroupArn != "" && new.Spec.AcceleratorArn != "" {
+		return false, fmt.Errorf("Spec.EndpointGroupArn and Spec.AcceleratorArn are mutually exclusive")
+	}
+
+	return true, nil
+}
+
+func validateUpdate(previous, new *endpointgroupbindingv1alpha1.EndpointGroupBinding) (bool, error) {
+	// Validate immutability
 	if previous.Spec.EndpointGroupArn != new.Spec.EndpointGroupArn {
 		return false, fmt.Errorf("Spec.EndpointGroupArn is immutable")
 	}
+	if previous.Spec.AcceleratorArn != new.Spec.AcceleratorArn {
+		return false, fmt.Errorf("Spec.AcceleratorArn is immutable")
+	}
+
+	// Validate that at least one ARN is specified
+	if new.Spec.EndpointGroupArn == "" && new.Spec.AcceleratorArn == "" {
+		return false, fmt.Errorf("either Spec.EndpointGroupArn or Spec.AcceleratorArn must be specified")
+	}
+
+	// Validate that both ARNs are not specified
+	if new.Spec.EndpointGroupArn != "" && new.Spec.AcceleratorArn != "" {
+		return false, fmt.Errorf("Spec.EndpointGroupArn and Spec.AcceleratorArn are mutually exclusive")
+	}
+
 	return true, nil
 }
 

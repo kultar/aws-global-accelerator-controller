@@ -1,10 +1,28 @@
+---
+# Example 1: Direct endpoint group ARN mode (original behavior)
+# Use this when you already know the exact endpoint group ARN
 apiVersion: operator.h3poteto.dev/v1alpha1
 kind: EndpointGroupBinding
 metadata:
-  name: h3poteto-test
+  name: h3poteto-test-direct
   namespace: default
 spec:
   endpointGroupArn: arn:aws:globalaccelerator::564677439943:accelerator/d113ae41-29df-496d-b8d2-316b322764bf/listener/f1fe2960/endpoint-group/eea4ad34cd00
   weight: 100
+  serviceRef:
+    name: h3poteto-test
+---
+# Example 2: Accelerator ARN mode (new behavior)
+# Use this to automatically create/find endpoint group for the current region
+# Useful for multi-region deployments where you want the controller to manage endpoint groups
+apiVersion: operator.h3poteto.dev/v1alpha1
+kind: EndpointGroupBinding
+metadata:
+  name: h3poteto-test-accelerator
+  namespace: default
+spec:
+  acceleratorArn: arn:aws:globalaccelerator::564677439943:accelerator/d113ae41-29df-496d-b8d2-316b322764bf
+  weight: 100
+  clientIPPreservation: true
   serviceRef:
     name: h3poteto-test

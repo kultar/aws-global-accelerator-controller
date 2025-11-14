@@ -906,6 +906,62 @@ func (a *AWS) GetEndpointGroup(ctx context.Context, listenerArn string) (*gatype
 	return &endpointGroups[0], nil
 }
 
+// GetEndpointGroupByRegion gets an endpoint group for a specific region from a listener
+// Returns EndpointGroupNotFoundException if no endpoint group exists for the region
+func (a *AWS) GetEndpointGroupByRegion(ctx context.Context, listenerArn, region string) (*gatypes.EndpointGroup, error) {
+	input := &globalaccelerator.ListEndpointGroupsInput{
+		ListenerArn: aws.String(listenerArn),
+		MaxResults:  aws.Int32(100),
+	}
+	paginator := globalaccelerator.NewListEndpointGroupsPaginator(a.ga, input)
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, eg := range output.EndpointGroups {
+			if eg.EndpointGroupRegion != nil && *eg.EndpointGroupRegion == region {
+				return &eg, nil
+			}
+		}
+	}
+
+	return nil, &gatypes.EndpointGroupNotFoundException{}
+}
+
+// EnsureEndpointGroupForRegion gets or creates an endpoint group for a specific region
+// Returns the endpoint group ARN and whether it was newly created
+func (a *AWS) EnsureEndpointGroupForRegion(ctx context.Context, listenerArn, region string) (string, bool, error) {
+	// First try to get existing endpoint group for this region
+	existingEG, err := a.GetEndpointGroupByRegion(ctx, listenerArn, region)
+	if err == nil {
+		// Endpoint group already exists
+		klog.Infof("Found existing endpoint group for region %s: %s", region, *existingEG.EndpointGroupArn)
+		return *existingEG.EndpointGroupArn, false, nil
+	}
+
+	// Check if it's a "not found" error
+	var notFoundErr *gatypes.EndpointGroupNotFoundException
+	if !errors.As(err, &notFoundErr) {
+		// Some other error occurred
+		return "", false, err
+	}
+
+	// Endpoint group doesn't exist, create it
+	klog.Infof("Creating new endpoint group for region %s on listener %s", region, listenerArn)
+	endpointInput := &globalaccelerator.CreateEndpointGroupInput{
+		EndpointConfigurations: []gatypes.EndpointConfiguration{}, // Start with no endpoints
+		EndpointGroupRegion:    aws.String(region),
+		ListenerArn:            aws.String(listenerArn),
+	}
+	endpointRes, err := a.ga.CreateEndpointGroup(ctx, endpointInput)
+	if err != nil {
+		return "", false, err
+	}
+	klog.Infof("EndpointGroup created: %s", *endpointRes.EndpointGroup.EndpointGroupArn)
+	return *endpointRes.EndpointGroup.EndpointGroupArn, true, nil
+}
+
 func (a *AWS) addEndpoint(ctx context.Context, endpointGroupArn, lbArn string, ipPreserve bool, weight *int32) (*string, error) {
 	input := &globalaccelerator.AddEndpointsInput{
 		EndpointConfigurations: []gatypes.EndpointConfiguration{

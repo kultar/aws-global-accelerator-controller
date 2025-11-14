@@ -45,12 +45,19 @@ func (c *EndpointGroupBindingController) reconcileDelete(ctx context.Context, ob
 		return reconcile.Result{}, nil
 	}
 
-	endpoint, err := cloud.DescribeEndpointGroup(ctx, obj.Spec.EndpointGroupArn)
+	// Resolve the endpoint group ARN
+	endpointGroupArn, err := c.resolveEndpointGroupArn(ctx, obj, cloud)
+	if err != nil {
+		klog.Error(err)
+		return reconcile.Result{}, err
+	}
+
+	endpoint, err := cloud.DescribeEndpointGroup(ctx, endpointGroupArn)
 	if err != nil {
 		// If the endpoint group is not found, we should remove the finalizer and update the object.
 		var awsErr smithy.APIError
 		if errors.As(err, &awsErr) {
-			klog.V(1).Infof("Failed to get EndpointGroup %s: %s", obj.Spec.EndpointGroupArn, awsErr.ErrorCode())
+			klog.V(1).Infof("Failed to get EndpointGroup %s: %s", endpointGroupArn, awsErr.ErrorCode())
 			if awsErr.ErrorCode() == cloudaws.ErrEndpointGroupNotFoundException {
 				copied := obj.DeepCopy()
 				copied.Finalizers = []string{}
@@ -114,6 +121,30 @@ func (c *EndpointGroupBindingController) reconcileUpdate(ctx context.Context, ob
 	// If the ARN is not in the status.endpointIds, add it to the endpoint group
 	// If status.endpointIds is not in the ARN, remove it from the endpoint group
 
+	// First, resolve the endpoint group ARN
+	endpointGroupArn, err := c.resolveEndpointGroupArn(ctx, obj, cloud)
+	if err != nil {
+		klog.Error(err)
+		return reconcile.Result{}, err
+	}
+
+	// Update status if the resolved ARN changed
+	if obj.Status.ResolvedEndpointGroupArn != endpointGroupArn {
+		copied := obj.DeepCopy()
+		copied.Status.ResolvedEndpointGroupArn = endpointGroupArn
+		_, err = c.client.OperatorV1alpha1().EndpointGroupBindings(copied.Namespace).UpdateStatus(ctx, copied, metav1.UpdateOptions{})
+		if err != nil {
+			klog.Error(err)
+			return reconcile.Result{}, err
+		}
+		// Re-fetch the object after status update
+		obj, err = c.client.OperatorV1alpha1().EndpointGroupBindings(obj.Namespace).Get(ctx, obj.Name, metav1.GetOptions{})
+		if err != nil {
+			klog.Error(err)
+			return reconcile.Result{}, err
+		}
+	}
+
 	arns := map[string]string{}
 	hostnames, err := c.getLoadBalancerHostName(obj)
 	if err != nil {
@@ -158,7 +189,7 @@ func (c *EndpointGroupBindingController) reconcileUpdate(ctx context.Context, ob
 		return reconcile.Result{}, nil
 	}
 
-	endpointGroup, err := cloud.DescribeEndpointGroup(ctx, obj.Spec.EndpointGroupArn)
+	endpointGroup, err := cloud.DescribeEndpointGroup(ctx, endpointGroupArn)
 	if err != nil {
 		klog.Error(err)
 		return reconcile.Result{}, err
@@ -249,4 +280,63 @@ func (c *EndpointGroupBindingController) getLoadBalancerHostName(obj *endpointgr
 		return []string{}, nil
 	}
 	return hostnames, nil
+}
+
+// resolveEndpointGroupArn resolves the endpoint group ARN from the spec.
+// It supports two modes:
+// 1. Direct mode: spec.endpointGroupArn is specified
+// 2. Accelerator mode: spec.acceleratorArn is specified, and the controller
+//    will get/create the endpoint group for the current region
+func (c *EndpointGroupBindingController) resolveEndpointGroupArn(ctx context.Context, obj *endpointgroupbindingv1alpha1.EndpointGroupBinding, cloud *cloudaws.AWS) (string, error) {
+	// Mode 1: Direct endpoint group ARN
+	if obj.Spec.EndpointGroupArn != "" {
+		klog.V(4).Infof("Using direct endpoint group ARN: %s", obj.Spec.EndpointGroupArn)
+		return obj.Spec.EndpointGroupArn, nil
+	}
+
+	// Mode 2: Accelerator ARN - need to resolve endpoint group
+	if obj.Spec.AcceleratorArn != "" {
+		klog.Infof("Resolving endpoint group from accelerator ARN: %s", obj.Spec.AcceleratorArn)
+
+		// Get the listener from the accelerator
+		listener, err := cloud.GetListener(ctx, obj.Spec.AcceleratorArn)
+		if err != nil {
+			klog.Errorf("Failed to get listener for accelerator %s: %v", obj.Spec.AcceleratorArn, err)
+			return "", err
+		}
+
+		// Get the region from the load balancer
+		hostnames, err := c.getLoadBalancerHostName(obj)
+		if err != nil {
+			return "", err
+		}
+		if len(hostnames) == 0 {
+			return "", errors.New("no load balancer hostname found")
+		}
+
+		// Use the first hostname to determine region
+		_, region, err := cloudaws.GetLBNameFromHostname(hostnames[0])
+		if err != nil {
+			klog.Errorf("Failed to get region from hostname %s: %v", hostnames[0], err)
+			return "", err
+		}
+
+		// Ensure endpoint group exists for this region
+		endpointGroupArn, created, err := cloud.EnsureEndpointGroupForRegion(ctx, *listener.ListenerArn, region)
+		if err != nil {
+			klog.Errorf("Failed to ensure endpoint group for region %s: %v", region, err)
+			return "", err
+		}
+
+		if created {
+			klog.Infof("Created new endpoint group %s for region %s", endpointGroupArn, region)
+		} else {
+			klog.V(4).Infof("Using existing endpoint group %s for region %s", endpointGroupArn, region)
+		}
+
+		return endpointGroupArn, nil
+	}
+
+	// Neither mode specified - error
+	return "", errors.New("either spec.endpointGroupArn or spec.acceleratorArn must be specified")
 }
