@@ -67,14 +67,26 @@ func Validate(admission *admissionv1.AdmissionReview) *admissionv1.AdmissionRevi
 }
 
 func validateCreate(new *endpointgroupbindingv1alpha1.EndpointGroupBinding) (bool, error) {
-	// Validate that at least one ARN is specified
-	if new.Spec.EndpointGroupArn == "" && new.Spec.AcceleratorArn == "" {
-		return false, fmt.Errorf("either Spec.EndpointGroupArn or Spec.AcceleratorArn must be specified")
+	// Count how many fields are specified
+	fieldsSet := 0
+	if new.Spec.EndpointGroupArn != "" {
+		fieldsSet++
+	}
+	if new.Spec.AcceleratorArn != "" {
+		fieldsSet++
+	}
+	if new.Spec.GlobalAcceleratorName != "" {
+		fieldsSet++
 	}
 
-	// Validate that both ARNs are not specified
-	if new.Spec.EndpointGroupArn != "" && new.Spec.AcceleratorArn != "" {
-		return false, fmt.Errorf("Spec.EndpointGroupArn and Spec.AcceleratorArn are mutually exclusive")
+	// Validate that at least one is specified
+	if fieldsSet == 0 {
+		return false, fmt.Errorf("one of Spec.EndpointGroupArn, Spec.AcceleratorArn, or Spec.GlobalAcceleratorName must be specified")
+	}
+
+	// Validate that only one is specified (mutually exclusive)
+	if fieldsSet > 1 {
+		return false, fmt.Errorf("Spec.EndpointGroupArn, Spec.AcceleratorArn, and Spec.GlobalAcceleratorName are mutually exclusive")
 	}
 
 	return true, nil
@@ -88,15 +100,30 @@ func validateUpdate(previous, new *endpointgroupbindingv1alpha1.EndpointGroupBin
 	if previous.Spec.AcceleratorArn != new.Spec.AcceleratorArn {
 		return false, fmt.Errorf("Spec.AcceleratorArn is immutable")
 	}
-
-	// Validate that at least one ARN is specified
-	if new.Spec.EndpointGroupArn == "" && new.Spec.AcceleratorArn == "" {
-		return false, fmt.Errorf("either Spec.EndpointGroupArn or Spec.AcceleratorArn must be specified")
+	if previous.Spec.GlobalAcceleratorName != new.Spec.GlobalAcceleratorName {
+		return false, fmt.Errorf("Spec.GlobalAcceleratorName is immutable")
 	}
 
-	// Validate that both ARNs are not specified
-	if new.Spec.EndpointGroupArn != "" && new.Spec.AcceleratorArn != "" {
-		return false, fmt.Errorf("Spec.EndpointGroupArn and Spec.AcceleratorArn are mutually exclusive")
+	// Count how many fields are specified
+	fieldsSet := 0
+	if new.Spec.EndpointGroupArn != "" {
+		fieldsSet++
+	}
+	if new.Spec.AcceleratorArn != "" {
+		fieldsSet++
+	}
+	if new.Spec.GlobalAcceleratorName != "" {
+		fieldsSet++
+	}
+
+	// Validate that at least one is specified
+	if fieldsSet == 0 {
+		return false, fmt.Errorf("one of Spec.EndpointGroupArn, Spec.AcceleratorArn, or Spec.GlobalAcceleratorName must be specified")
+	}
+
+	// Validate that only one is specified (mutually exclusive)
+	if fieldsSet > 1 {
+		return false, fmt.Errorf("Spec.EndpointGroupArn, Spec.AcceleratorArn, and Spec.GlobalAcceleratorName are mutually exclusive")
 	}
 
 	return true, nil

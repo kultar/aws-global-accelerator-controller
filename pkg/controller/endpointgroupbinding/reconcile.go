@@ -283,10 +283,10 @@ func (c *EndpointGroupBindingController) getLoadBalancerHostName(obj *endpointgr
 }
 
 // resolveEndpointGroupArn resolves the endpoint group ARN from the spec.
-// It supports two modes:
+// It supports three modes:
 // 1. Direct mode: spec.endpointGroupArn is specified
-// 2. Accelerator mode: spec.acceleratorArn is specified, and the controller
-//    will get/create the endpoint group for the current region
+// 2. Accelerator ARN mode: spec.acceleratorArn is specified, controller gets/creates endpoint group
+// 3. Name-based mode: spec.globalAcceleratorName is specified, controller finds GA by name
 func (c *EndpointGroupBindingController) resolveEndpointGroupArn(ctx context.Context, obj *endpointgroupbindingv1alpha1.EndpointGroupBinding, cloud *cloudaws.AWS) (string, error) {
 	// Mode 1: Direct endpoint group ARN
 	if obj.Spec.EndpointGroupArn != "" {
@@ -294,49 +294,66 @@ func (c *EndpointGroupBindingController) resolveEndpointGroupArn(ctx context.Con
 		return obj.Spec.EndpointGroupArn, nil
 	}
 
-	// Mode 2: Accelerator ARN - need to resolve endpoint group
-	if obj.Spec.AcceleratorArn != "" {
-		klog.Infof("Resolving endpoint group from accelerator ARN: %s", obj.Spec.AcceleratorArn)
-
-		// Get the listener from the accelerator
-		listener, err := cloud.GetListener(ctx, obj.Spec.AcceleratorArn)
-		if err != nil {
-			klog.Errorf("Failed to get listener for accelerator %s: %v", obj.Spec.AcceleratorArn, err)
-			return "", err
-		}
-
-		// Get the region from the load balancer
-		hostnames, err := c.getLoadBalancerHostName(obj)
-		if err != nil {
-			return "", err
-		}
-		if len(hostnames) == 0 {
-			return "", errors.New("no load balancer hostname found")
-		}
-
-		// Use the first hostname to determine region
-		_, region, err := cloudaws.GetLBNameFromHostname(hostnames[0])
-		if err != nil {
-			klog.Errorf("Failed to get region from hostname %s: %v", hostnames[0], err)
-			return "", err
-		}
-
-		// Ensure endpoint group exists for this region
-		endpointGroupArn, created, err := cloud.EnsureEndpointGroupForRegion(ctx, *listener.ListenerArn, region)
-		if err != nil {
-			klog.Errorf("Failed to ensure endpoint group for region %s: %v", region, err)
-			return "", err
-		}
-
-		if created {
-			klog.Infof("Created new endpoint group %s for region %s", endpointGroupArn, region)
-		} else {
-			klog.V(4).Infof("Using existing endpoint group %s for region %s", endpointGroupArn, region)
-		}
-
-		return endpointGroupArn, nil
+	// Get region from load balancer (needed for modes 2 & 3)
+	hostnames, err := c.getLoadBalancerHostName(obj)
+	if err != nil {
+		return "", err
+	}
+	if len(hostnames) == 0 {
+		return "", errors.New("no load balancer hostname found")
+	}
+	_, region, err := cloudaws.GetLBNameFromHostname(hostnames[0])
+	if err != nil {
+		klog.Errorf("Failed to get region from hostname %s: %v", hostnames[0], err)
+		return "", err
 	}
 
-	// Neither mode specified - error
-	return "", errors.New("either spec.endpointGroupArn or spec.acceleratorArn must be specified")
+	var acceleratorArn string
+
+	// Mode 2: Accelerator ARN - use directly
+	if obj.Spec.AcceleratorArn != "" {
+		klog.Infof("Using provided accelerator ARN: %s", obj.Spec.AcceleratorArn)
+		acceleratorArn = obj.Spec.AcceleratorArn
+	} else if obj.Spec.GlobalAcceleratorName != "" {
+		// Mode 3: Name-based - find GA by name
+		klog.Infof("Looking up Global Accelerator by name: %s", obj.Spec.GlobalAcceleratorName)
+		accelerator, err := cloud.FindGlobalAcceleratorByName(ctx, obj.Spec.GlobalAcceleratorName)
+		if err != nil {
+			klog.Errorf("Failed to find Global Accelerator by name %s: %v", obj.Spec.GlobalAcceleratorName, err)
+			return "", err
+		}
+
+		if accelerator == nil {
+			return "", errors.New("Global Accelerator with name " + obj.Spec.GlobalAcceleratorName + " not found. " +
+				"Create it first via annotations in the primary region, or specify acceleratorArn instead")
+		}
+
+		klog.Infof("Found Global Accelerator %s with ARN: %s", obj.Spec.GlobalAcceleratorName, *accelerator.AcceleratorArn)
+		acceleratorArn = *accelerator.AcceleratorArn
+	} else {
+		// No mode specified - error
+		return "", errors.New("one of spec.endpointGroupArn, spec.acceleratorArn, or spec.globalAcceleratorName must be specified")
+	}
+
+	// For modes 2 & 3: Get listener and ensure endpoint group exists
+	listener, err := cloud.GetListener(ctx, acceleratorArn)
+	if err != nil {
+		klog.Errorf("Failed to get listener for accelerator %s: %v", acceleratorArn, err)
+		return "", err
+	}
+
+	// Ensure endpoint group exists for this region
+	endpointGroupArn, created, err := cloud.EnsureEndpointGroupForRegion(ctx, *listener.ListenerArn, region)
+	if err != nil {
+		klog.Errorf("Failed to ensure endpoint group for region %s: %v", region, err)
+		return "", err
+	}
+
+	if created {
+		klog.Infof("Created new endpoint group %s for region %s", endpointGroupArn, region)
+	} else {
+		klog.V(4).Infof("Using existing endpoint group %s for region %s", endpointGroupArn, region)
+	}
+
+	return endpointGroupArn, nil
 }

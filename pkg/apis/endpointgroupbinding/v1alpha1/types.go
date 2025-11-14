@@ -29,6 +29,16 @@ type EndpointGroupBindingSpec struct {
 	// +kubebuilder:validation:Type:=string
 	AcceleratorArn string `json:"acceleratorArn,omitempty"`
 	// +optional
+	// +kubebuilder:validation:Type:=string
+	// GlobalAcceleratorName allows finding/creating GA by name instead of ARN.
+	// If GA with this name exists, it will be used. If not, it will be created
+	// in the primary region (requires globalAcceleratorManaged: true).
+	GlobalAcceleratorName string `json:"globalAcceleratorName,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Type:=string
+	// ClusterName is used to tag and identify GAs created by this controller
+	ClusterName string `json:"clusterName,omitempty"`
+	// +optional
 	// +kubebuilder:validation:Type:=boolean
 	// +kubebuilder:default=false
 	ClientIPPreservation bool `json:"clientIPPreservation"`

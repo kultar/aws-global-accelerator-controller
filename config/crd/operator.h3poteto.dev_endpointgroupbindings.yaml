@@ -53,7 +53,17 @@ spec:
               clientIPPreservation:
                 default: false
                 type: boolean
+              clusterName:
+                description: ClusterName is used to tag and identify GAs created
+                  by this controller
+                type: string
               endpointGroupArn:
+                type: string
+              globalAcceleratorName:
+                description: GlobalAcceleratorName allows finding/creating GA by
+                  name instead of ARN. If GA with this name exists, it will be used.
+                  If not, it will be created in the primary region (requires globalAcceleratorManaged
+                  true).
                 type: string
               ingressRef:
                 properties:

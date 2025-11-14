@@ -109,6 +109,26 @@ func (a *AWS) ListGlobalAcceleratorByResource(ctx context.Context, clusterName, 
 	return res, nil
 }
 
+// FindGlobalAcceleratorByName finds a Global Accelerator by its name
+// Returns the accelerator if found, nil if not found
+func (a *AWS) FindGlobalAcceleratorByName(ctx context.Context, acceleratorName string) (*gatypes.Accelerator, error) {
+	accelerators, err := a.listAccelerator(ctx)
+	if err != nil {
+		klog.Error(err)
+		return nil, err
+	}
+
+	for _, accelerator := range accelerators {
+		if accelerator.Name != nil && *accelerator.Name == acceleratorName {
+			klog.V(4).Infof("Found Global Accelerator with name %s: %s", acceleratorName, *accelerator.AcceleratorArn)
+			return accelerator, nil
+		}
+	}
+
+	klog.V(4).Infof("No Global Accelerator found with name: %s", acceleratorName)
+	return nil, nil
+}
+
 func (a *AWS) EnsureGlobalAcceleratorForService(
 	ctx context.Context,
 	svc *corev1.Service,
